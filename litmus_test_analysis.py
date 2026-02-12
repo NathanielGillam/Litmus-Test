@@ -157,56 +157,31 @@ if uploaded_image != None:
 
     ### Auto-crop function
     if auto_crop:
-        try:
-            segments = skimage.segmentation.slic(image, n_segments = 3, convert2lab = True)
-            unborder = skimage.segmentation.clear_border(labels = segments, buffer_size = 0)
-            mask = unborder > 0
-            mask = np.stack([mask, mask, mask], axis = 2)
-            m_image = np.ma.masked_where(~mask, image)
-    
-            ### First round of cropping
-            tc, bc, lc, rc = 0,0,0,0
-            
-            for row in range(0, m_image.shape[0]):
-                if not m_image.mask[row,:,:].all():
-                    tc = row
-                    break
-            for row in range(m_image.shape[0]-1, 0, -1):
-                if not m_image.mask[row,:,:].all():
-                    bc = m_image.shape[0] - row
-                    break
-            
-            acceptance_rate = 0.2
-            
-            for col in range(0, m_image.shape[1]):
-                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
-                #if not m_image.mask[:,col,:].all():
-                    lc = col
-                    break
-            for col in range(m_image.shape[1]-1, 0, -1):
-                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
-                #if not m_image.mask[:,col,:].all():
-                    rc = m_image.shape[1] - col
-                    break
-            for row in range(m_image.shape[0] - bc,0,-1):
-                if m_image.mask[row, lc:m_image.shape[1]-rc, :].sum() / np.ma.count(m_image.mask[row, lc:m_image.shape[1]-rc, :]) <= acceptance_rate:
-                    bc = m_image.shape[0]-row
-                    break
+    try:
+        # Convert to grayscale and threshold to find the paper
+        gray = skimage.color.rgb2gray(image)
+        thresh = skimage.filters.threshold_otsu(gray)
+        binary = gray > thresh
+        
+        # Clean up noise and find the paper's coordinates
+        binary = skimage.morphology.remove_small_objects(binary, min_size=500)
+        coords = np.column_stack(np.where(binary))
+        
+        if coords.size == 0:
+            raise ValueError("No paper detected")
 
-        except:
-            with crop_placeholder.container():
-                st.error('Auto-crop was unable to identify the boundaries of the litmus paper in the submitted image. Please use manual cropping.', icon="⚠️")
-            
-        if not (tc>0)&(bc>0)&(lc>0)&(rc>0):
-            #crop_segments, ax = plt.subplots()
-            #ax.imshow(skimage.segmentation.mark_boundaries(image, segments, mode = 'thick', color = (1,0.1,0.6)))
-            with crop_placeholder.container():
-                st.error('Auto-crop was unable to identify the boundaries of the litmus paper in the submitted image. Please use manual cropping.', icon="⚠️")
-            #with image_placeholder.container():
-            #    st.write(crop_segments)
-            st.stop()
-        else:
-            crop_done = True
+        # Get crop boundaries (top, bottom, left, right)
+        t_row, l_col = coords.min(axis=0)
+        b_row, r_col = coords.max(axis=0)
+        
+        # Set crop values with a small 5-pixel buffer
+        tc, lc = t_row, l_col
+        bc, rc = (image.shape[0] - b_row), (image.shape[1] - r_col)
+
+    except Exception as e:
+        with crop_placeholder.container():
+            st.error(f'Auto-crop error: {e}. Try manual cropping.', icon="⚠️")
+
                 
     ### Crop the image according to the user's inputs on the sidebar
     cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
