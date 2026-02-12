@@ -157,30 +157,30 @@ if uploaded_image != None:
 
     ### Auto-crop function
     if auto_crop:
-    try:
-        # Convert to grayscale and threshold to find the paper
-        gray = skimage.color.rgb2gray(image)
-        thresh = skimage.filters.threshold_otsu(gray)
-        binary = gray > thresh
-        
-        # Clean up noise and find the paper's coordinates
-        binary = skimage.morphology.remove_small_objects(binary, min_size=500)
-        coords = np.column_stack(np.where(binary))
-        
-        if coords.size == 0:
-            raise ValueError("No paper detected")
-
-        # Get crop boundaries (top, bottom, left, right)
-        t_row, l_col = coords.min(axis=0)
-        b_row, r_col = coords.max(axis=0)
-        
-        # Set crop values with a small 5-pixel buffer
-        tc, lc = t_row, l_col
-        bc, rc = (image.shape[0] - b_row), (image.shape[1] - r_col)
-
-    except Exception as e:
-        with crop_placeholder.container():
-            st.error(f'Auto-crop error: {e}. Try manual cropping.', icon="⚠️")
+        try:
+            # Convert to grayscale and threshold to find the paper
+            gray = skimage.color.rgb2gray(image)
+            thresh = skimage.filters.threshold_otsu(gray)
+            binary = gray > thresh
+            
+            # Clean up noise and find the paper's coordinates
+            binary = skimage.morphology.remove_small_objects(binary, min_size=500)
+            coords = np.column_stack(np.where(binary))
+            
+            if coords.size == 0:
+                raise ValueError("No paper detected")
+    
+            # Get crop boundaries (top, bottom, left, right)
+            t_row, l_col = coords.min(axis=0)
+            b_row, r_col = coords.max(axis=0)
+            
+            # Set crop values with a small 5-pixel buffer
+            tc, lc = t_row, l_col
+            bc, rc = (image.shape[0] - b_row), (image.shape[1] - r_col)
+    
+        except Exception as e:
+            with crop_placeholder.container():
+                st.error(f'Auto-crop error: {e}. Try manual cropping.', icon="⚠️")
 
                 
     ### Crop the image according to the user's inputs on the sidebar
