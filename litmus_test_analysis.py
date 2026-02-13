@@ -116,175 +116,125 @@ with val_col:
 # Image processing section
 ############################
 
-# Initialize crop_done at the start to avoid logic errors
-crop_done = False 
+# 1. Initialize logic flags
+crop_done = False
+characterize = False
 
-if uploaded_image != None:
+if uploaded_image is not None:
     image = skimage.io.imread(uploaded_image)
-    h, w, _ = image.shape # Get image dimensions for safety
+    h, w, _ = image.shape
 
-    # Initialize crop variables with defaults to prevent NameError
+    # 2. Initialize crop coordinates with safe defaults (no crop)
     tc, bc, lc, rc = 0, 0, 0, 0
 
-    ### Read input image metadata to identify the image resolution
+    # 3. Handle DPI detection
     meta_img = Image.open(uploaded_image)
     input_dpi = meta_img.info.get('dpi', (96, 96))
-
-    ### Update logic to accept 96 or 200 DPI
-    if not (int(input_dpi[0]) in [96, 200]):
-        disp = 'WARNING: Non-standard resolution detected ({}). Expected 96 or 200 DPI.'.format(input_dpi)
-        st.error(disp, icon="⚠️")
-    
     image_dpi = input_dpi[0]
+    pix_in = image_dpi
 
-    ### Auto-crop function (Improved for 96/200 DPI)
+    if not (int(image_dpi) in [96, 200]):
+        st.warning(f'Detection: {image_dpi} DPI. Expected 96 or 200.', icon="⚠️")
+
+    # 4. Auto-Crop Logic
     if auto_crop:
         try:
-            # Convert to LAB and use Lightness to find the paper
+            # Using Lightness to isolate the paper
             l_chan = rgb2lab(image)[:, :, 0]
-            # Threshold to create a binary mask of the paper
             paper_mask = l_chan > threshold_otsu(l_chan)
             
-            # Clean up the mask relative to DPI
-            paper_mask = remove_small_objects(paper_mask, min_size=int(500 * (image_dpi/200)))
-            paper_mask = remove_small_holes(paper_mask, area_threshold=int(500 * (image_dpi/200)))
+            # Remove noise based on DPI
+            clean_size = int(500 * (image_dpi/200))
+            paper_mask = remove_small_objects(paper_mask, min_size=clean_size)
+            paper_mask = remove_small_holes(paper_mask, area_threshold=clean_size)
 
-            # Find coordinates of all "True" pixels
             coords = np.column_stack(np.where(paper_mask))
             
             if coords.size > 0:
                 y_min, x_min = coords.min(axis=0)
                 y_max, x_max = coords.max(axis=0)
                 
-                # Assign crop values with a small safety buffer
-                tc = int(y_min + 5)
-                bc = int(h - y_max + 5)
-                lc = int(x_min + 5)
-                rc = int(w - x_max + 5)
+                # Assign crop values with a small 5px buffer
+                tc = int(max(0, y_min + 5))
+                bc = int(max(0, h - y_max + 5))
+                lc = int(max(0, x_min + 5))
+                rc = int(max(0, w - x_max + 5))
                 
                 crop_done = True
             else:
-                st.error("Auto-crop: No paper detected. Please use manual mode.")
+                st.error("Auto-crop: Could not find paper. Try manual mode.")
         except Exception as e:
             st.error(f"Auto-crop failed: {e}")
-    
-    # If not auto-cropping, pull from the sidebar inputs defined at the top
     else:
-        # These are already defined in your sidebar block
-        # We ensure they are integers for the crop function
-        tc, bc, lc, rc = int(tc), int(bc), int(lc), int(rc)
-            
-    ### Crop execution (Only if we have valid coordinates)
-    # We use a try block here as a final safety net for the NameError
+        # Manual mode: get values from sidebar number_inputs
+        # Note: tc, bc, lc, rc must match the variable names in your sidebar
+        crop_done = st.session_state.get('done_cropping', False) # Use checkbox from sidebar
+
+    # 5. Execute Crop
     try:
         cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
-    except NameError:
-        st.warning("Please adjust cropping settings to begin.")
-        st.stop()
+    except Exception as e:
+        st.error(f"Crop Error: {e}. Resetting to full image.")
+        cropped_image = image
+        tc, bc, lc, rc = 0, 0, 0, 0
 
+    # 6. Display Crop Preview (Red Lines)
     extend = 20
-    crop_check, ax_c = plt.subplots()
+    fig_crop, ax_c = plt.subplots()
     ax_c.imshow(image)
-    ax_c.set_xlim(0,w); ax_c.set_ylim(h,0)
-    ax_c.plot([lc-extend,w-rc+extend],[h-bc,h-bc], color = 'red', lw = 0.8)
-    ax_c.plot([lc-extend,w-rc+extend],[tc,tc], color = 'red', lw = 0.8)
-    ax_c.plot([lc,lc],[h-bc+extend,tc-extend], color = 'red', lw = 0.8)
-    ax_c.plot([w-rc,w-rc],[h-bc+extend,tc-extend], color = 'red', lw = 0.8)
-
-    if not crop_done:
+    ax_c.set_xlim(0, w)
+    ax_c.set_ylim(h, 0)
+    # Draw red boundaries
+    ax_c.axhline(tc, color='red', lw=1, alpha=0.6)
+    ax_c.axhline(h-bc, color='red', lw=1, alpha=0.6)
+    ax_c.axvline(lc, color='red', lw=1, alpha=0.6)
+    ax_c.axvline(w-rc, color='red', lw=1, alpha=0.6)
+    
+    # If we are in manual mode and haven't clicked "Done", show the red lines
+    if not auto_crop and not crop_done:
         with crop_placeholder.container():
-            st.write(crop_check)
+            st.pyplot(fig_crop)
+    elif auto_crop and not crop_done:
+        # If auto-crop failed, show the image so user can see why
+        with crop_placeholder.container():
+            st.pyplot(fig_crop)
 
-### Start analysis
+############################
+# Analysis section
+############################
+
 if crop_done:
-    gray_img = rgb2lab(cropped_image)[:,:,0]
-    g_thresh = m_thresh if edit_center else threshold_otsu(gray_img)
-
-    mask = gray_img < g_thresh
-    mask[:int(0.35*mask.shape[0])] = 0
-    mask[int(0.65*mask.shape[0]):] = 0
-        
-    tested_angles = np.linspace(-np.pi/2, np.pi/2, 360, endpoint = False)
-    h, theta, d = hough_line(mask, theta = tested_angles)
-    _, angle, dist = hough_line_peaks(h, theta, d, num_peaks = 1)
-    angle = angle[0]; slope = np.tan(angle + np.pi/2)
-    (x0, y0) = dist * np.array([np.cos(angle), np.sin(angle)])
-    cntr = (x0, y0, slope)
-
-    # Use 'a' channel for better red spray detection
-    red_img = rgb2lab(cropped_image)[:,:,1] 
+    # Use 'a' channel for red spray detection (LAB index 1)
+    # This is much more robust than 'b' or Grayscale for pink/red spray
+    lab_img = rgb2lab(cropped_image)
+    red_img = lab_img[:,:,1] 
+    
+    # Auto-threshold for the spray
     r_thresh = threshold_otsu(red_img)
     
-    # Scale blur and cleaning to DPI
-    blr_img = ndi.uniform_filter(red_img, size = int(0.2 * image_dpi))
-    obj_size = int((0.15 * image_dpi)**2)
-    hole_size = int((0.25 * image_dpi)**2)
+    # Scale cleaning filters to DPI
+    blur_size = int(0.2 * image_dpi)
+    blr_img = ndi.uniform_filter(red_img, size=blur_size)
     
-    spray_mask = remove_small_holes(remove_small_objects(blr_img > r_thresh, obj_size), hole_size)
+    # Define "Droplet" vs "Spray" size by physical inches
+    obj_min = int((0.1 * image_dpi)**2) 
+    hole_min = int((0.2 * image_dpi)**2)
+
+    spray_mask = remove_small_holes(remove_small_objects(blr_img > r_thresh, obj_min), hole_min)
+    
+    
+
     spray_contours = find_contours(spray_mask)
     
     if len(spray_contours) == 2:
+        # Sort by Y-coordinate to ensure index 0 is Top and index 1 is Bottom
         spray_contours = sorted(spray_contours, key=lambda c: np.mean(c[:,0]))
         top_y, top_x = spray_contours[0][:,0], spray_contours[0][:,1]
         bot_y, bot_x = spray_contours[1][:,0], spray_contours[1][:,1]
         characterize = True
     else:
         characterize = False
-        
-    pix_in = image_dpi
-
-    if characterize:
-        x = np.arange(0, cropped_image.shape[1]+1, 1)
-        bot_interp = intp(bot_x, bot_y, assume_sorted = False, fill_value = 'extrapolate')(x)
-        top_interp = intp(top_x, top_y, assume_sorted = False, fill_value = 'extrapolate')(x)
-        center = cntr[2] * x + cntr[1]
-        
-        spray_width = abs(top_interp - bot_interp) / pix_in
-        bot_height = (bot_interp - center) / pix_in
-        top_height = (center - top_interp) / pix_in
-        apparent_center = np.mean([top_interp, bot_interp], axis = 0)
-        deflection = np.arctan(((center - apparent_center)/pix_in) / 1) * (180/np.pi)
-
-        fig, ax = plt.subplot_mosaic("A", dpi = 200)
-        ax['A'].imshow(cropped_image)
-        ax['A'].plot(x, top_interp, color='cyan', lw=1)
-        ax['A'].plot(x, bot_interp, color='magenta', lw=1)
-        ax['A'].axline((cntr[0], cntr[1]), slope = cntr[2], ls = '--', color = 'white', lw = 1)
-        ax['A'].set_axis_off()
-        
-        fig_mem = io.BytesIO()
-        plt.savefig(fig_mem, bbox_inches = 'tight', pad_inches = 0)
-
-        results = pd.DataFrame({
-            'mean': [spray_width.mean(), top_height.mean(), bot_height.mean(), deflection.mean()],
-            'σ': [spray_width.std(), top_height.std(), bot_height.std(), deflection.std()],
-            'min.': [spray_width.min(), top_height.min(), bot_height.min(), deflection.min()],
-            'max.': [spray_width.max(), top_height.max(), bot_height.max(), deflection.max()]
-        }, index=['Spray Width (in)', 'Top Side (in)', 'Bottom Side (in)', 'Deflection (deg)'])
-
         with image_placeholder.container():
-            st.pyplot(fig)
-        with values_placeholder.container():
-            st.subheader('Analysis Results')
-            st.dataframe(results.style.format("{:.3f}"))
-            
-            # Pass/Fail Logic
-            if 1.0 <= spray_width.mean() <= 2.0 and abs(deflection.mean()) <= 10:
-                disp = 'PASS'
-                st.success(disp)
-            else:
-                disp = 'FAIL'
-                st.error(disp)
-
-            button_place = st.empty()
-            doc = docx.Document()
-            doc.add_heading('Litmus Test Report', 0)
-            doc.add_paragraph(f"DPI: {pix_in}")
-            # ... (Rest of doc generation logic)
-            
-            download_object = io.BytesIO()
-            doc.save(download_object)
-            with button_place.container():
-                st.download_button(label = 'Download Report', data = download_object, file_name = 'report.docx')
-    else:
-        st.error('FAIL: spray pattern edge detection unsuccessful')
+            st.error(f"FAIL: Detected {len(spray_contours)} edges. Need exactly 2.")
+            # Show the mask to the user so they can see what went wrong
+            st.image(spray_mask.astype(float), caption="Debug: Spray Mask")
