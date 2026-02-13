@@ -204,37 +204,42 @@ if uploaded_image is not None:
 ############################
 
 if crop_done:
-    # Use 'a' channel for red spray detection (LAB index 1)
-    # This is much more robust than 'b' or Grayscale for pink/red spray
+    # 1. Isolate the spray using the 'a' channel (Red-Green axis)
     lab_img = rgb2lab(cropped_image)
     red_img = lab_img[:,:,1] 
     
-    # Auto-threshold for the spray
+    # 2. Thresholding
     r_thresh = threshold_otsu(red_img)
     
-    # Scale cleaning filters to DPI
-    blur_size = int(0.2 * image_dpi)
+    # 3. Aggressive Cleaning (scaled by DPI)
+    # Increase the blur size slightly to merge small droplets into one solid band
+    blur_size = int(0.25 * image_dpi)
     blr_img = ndi.uniform_filter(red_img, size=blur_size)
     
-    # Define "Droplet" vs "Spray" size by physical inches
-    obj_min = int((0.1 * image_dpi)**2) 
-    hole_min = int((0.2 * image_dpi)**2)
-
+    # 4. Filter out noise (objects smaller than 0.25 inches)
+    obj_min = int((0.25 * image_dpi)**2) 
+    hole_min = int((0.5 * image_dpi)**2)
     spray_mask = remove_small_holes(remove_small_objects(blr_img > r_thresh, obj_min), hole_min)
     
+    # 5. Find all contours
+    all_contours = find_contours(spray_mask)
     
-
-    spray_contours = find_contours(spray_mask)
-    
-    if len(spray_contours) == 2:
-        # Sort by Y-coordinate to ensure index 0 is Top and index 1 is Bottom
-        spray_contours = sorted(spray_contours, key=lambda c: np.mean(c[:,0]))
+    # NEW LOGIC: Filter and find the two LONGEST contours (The top and bottom edges)
+    if len(all_contours) >= 2:
+        # Sort all found contours by their length (number of points)
+        sorted_contours = sorted(all_contours, key=lambda c: len(c), reverse=True)
+        
+        # Take the two longest ones as our candidates
+        best_two = sorted_contours[:2]
+        
+        # Sort these two by their average Y-position to identify Top vs Bottom
+        spray_contours = sorted(best_two, key=lambda c: np.mean(c[:,0]))
+        
         top_y, top_x = spray_contours[0][:,0], spray_contours[0][:,1]
         bot_y, bot_x = spray_contours[1][:,0], spray_contours[1][:,1]
         characterize = True
     else:
         characterize = False
         with image_placeholder.container():
-            st.error(f"FAIL: Detected {len(spray_contours)} edges. Need exactly 2.")
-            # Show the mask to the user so they can see what went wrong
-            st.image(spray_mask.astype(float), caption="Debug: Spray Mask")
+            st.error(f"FAIL: Only detected {len(all_contours)} edges. Need at least 2.")
+            st.image(spray_mask.astype(float), caption="Debug: Increase contrast or clean paper edges.")
