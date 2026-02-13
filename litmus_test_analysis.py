@@ -116,11 +116,15 @@ with val_col:
 # Image processing section
 ############################
 
-# Initialize crop_done at the start of the process to avoid NameError
-crop_done = False if auto_crop else crop_done 
+# Initialize crop_done at the start to avoid logic errors
+crop_done = False 
 
 if uploaded_image != None:
     image = skimage.io.imread(uploaded_image)
+    h, w, _ = image.shape # Get image dimensions for safety
+
+    # Initialize crop variables with defaults to prevent NameError
+    tc, bc, lc, rc = 0, 0, 0, 0
 
     ### Read input image metadata to identify the image resolution
     meta_img = Image.open(uploaded_image)
@@ -136,23 +140,23 @@ if uploaded_image != None:
     ### Auto-crop function (Improved for 96/200 DPI)
     if auto_crop:
         try:
-            # Convert to LAB and use Lightness to find the paper (usually lighter than background)
+            # Convert to LAB and use Lightness to find the paper
             l_chan = rgb2lab(image)[:, :, 0]
             # Threshold to create a binary mask of the paper
             paper_mask = l_chan > threshold_otsu(l_chan)
             
-            # Clean up the mask
+            # Clean up the mask relative to DPI
             paper_mask = remove_small_objects(paper_mask, min_size=int(500 * (image_dpi/200)))
             paper_mask = remove_small_holes(paper_mask, area_threshold=int(500 * (image_dpi/200)))
 
-            # Find coordinates of all "True" pixels (the paper)
+            # Find coordinates of all "True" pixels
             coords = np.column_stack(np.where(paper_mask))
             
             if coords.size > 0:
                 y_min, x_min = coords.min(axis=0)
                 y_max, x_max = coords.max(axis=0)
                 
-                # Assign crop values (with a 5-pixel buffer to avoid cutting the edge)
+                # Assign crop values with a small safety buffer
                 tc = int(y_min + 5)
                 bc = int(h - y_max + 5)
                 lc = int(x_min + 5)
@@ -163,18 +167,29 @@ if uploaded_image != None:
                 st.error("Auto-crop: No paper detected. Please use manual mode.")
         except Exception as e:
             st.error(f"Auto-crop failed: {e}")
+    
+    # If not auto-cropping, pull from the sidebar inputs defined at the top
+    else:
+        # These are already defined in your sidebar block
+        # We ensure they are integers for the crop function
+        tc, bc, lc, rc = int(tc), int(bc), int(lc), int(rc)
             
-    ### Crop execution
-    cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
+    ### Crop execution (Only if we have valid coordinates)
+    # We use a try block here as a final safety net for the NameError
+    try:
+        cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
+    except NameError:
+        st.warning("Please adjust cropping settings to begin.")
+        st.stop()
 
     extend = 20
     crop_check, ax_c = plt.subplots()
     ax_c.imshow(image)
-    ax_c.set_xlim(0,image.shape[1]); ax_c.set_ylim(image.shape[0],0)
-    ax_c.plot([lc-extend,image.shape[1]-rc+extend],[image.shape[0]-bc,image.shape[0]-bc], color = 'red', lw = 0.8)
-    ax_c.plot([lc-extend,image.shape[1]-rc+extend],[tc,tc], color = 'red', lw = 0.8)
-    ax_c.plot([lc,lc],[image.shape[0]-bc+extend,tc-extend], color = 'red', lw = 0.8)
-    ax_c.plot([image.shape[1]-rc,image.shape[1]-rc],[image.shape[0]-bc+extend,tc-extend], color = 'red', lw = 0.8)
+    ax_c.set_xlim(0,w); ax_c.set_ylim(h,0)
+    ax_c.plot([lc-extend,w-rc+extend],[h-bc,h-bc], color = 'red', lw = 0.8)
+    ax_c.plot([lc-extend,w-rc+extend],[tc,tc], color = 'red', lw = 0.8)
+    ax_c.plot([lc,lc],[h-bc+extend,tc-extend], color = 'red', lw = 0.8)
+    ax_c.plot([w-rc,w-rc],[h-bc+extend,tc-extend], color = 'red', lw = 0.8)
 
     if not crop_done:
         with crop_placeholder.container():
