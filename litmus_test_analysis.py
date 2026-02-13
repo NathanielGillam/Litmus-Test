@@ -133,40 +133,36 @@ if uploaded_image != None:
     
     image_dpi = input_dpi[0]
 
-    ### Auto-crop function
+    ### Auto-crop function (Improved for 96/200 DPI)
     if auto_crop:
         try:
-            segments = skimage.segmentation.slic(image, n_segments = 3, convert2lab = True)
-            unborder = skimage.segmentation.clear_border(labels = segments, buffer_size = 0)
-            mask = unborder > 0
-            mask_3d = np.stack([mask, mask, mask], axis = 2)
-            m_image = np.ma.masked_where(~mask_3d, image)
-    
-            tc, bc, lc, rc = 0,0,0,0
-            for row in range(0, m_image.shape[0]):
-                if not m_image.mask[row,:,:].all():
-                    tc = row
-                    break
-            for row in range(m_image.shape[0]-1, 0, -1):
-                if not m_image.mask[row,:,:].all():
-                    bc = m_image.shape[0] - row
-                    break
+            # Convert to LAB and use Lightness to find the paper (usually lighter than background)
+            l_chan = rgb2lab(image)[:, :, 0]
+            # Threshold to create a binary mask of the paper
+            paper_mask = l_chan > threshold_otsu(l_chan)
             
-            acceptance_rate = 0.2
-            for col in range(0, m_image.shape[1]):
-                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
-                    lc = col
-                    break
-            for col in range(m_image.shape[1]-1, 0, -1):
-                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
-                    rc = m_image.shape[1] - col
-                    break
+            # Clean up the mask
+            paper_mask = remove_small_objects(paper_mask, min_size=int(500 * (image_dpi/200)))
+            paper_mask = remove_small_holes(paper_mask, area_threshold=int(500 * (image_dpi/200)))
+
+            # Find coordinates of all "True" pixels (the paper)
+            coords = np.column_stack(np.where(paper_mask))
             
-            if all([tc, bc, lc, rc]):
+            if coords.size > 0:
+                y_min, x_min = coords.min(axis=0)
+                y_max, x_max = coords.max(axis=0)
+                
+                # Assign crop values (with a 5-pixel buffer to avoid cutting the edge)
+                tc = int(y_min + 5)
+                bc = int(h - y_max + 5)
+                lc = int(x_min + 5)
+                rc = int(w - x_max + 5)
+                
                 crop_done = True
-        except:
-            with crop_placeholder.container():
-                st.error('Auto-crop error. Please use manual cropping.', icon="⚠️")
+            else:
+                st.error("Auto-crop: No paper detected. Please use manual mode.")
+        except Exception as e:
+            st.error(f"Auto-crop failed: {e}")
             
     ### Crop execution
     cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
