@@ -240,7 +240,7 @@ if crop_done:
         cntr = (0, cropped_image.shape[0]/2, 0)
 
     ### Use the 'a' channel (Red-Green) instead of 'b' for better red detection
-    red_img = rgb2lab(cropped_image)[:,:,1] 
+    red_img = rgb2lab(cropped_image)[:,:,2] 
 
     ### Mask off the black pixels of the centerline
     y_end = cntr[2]*mask.shape[1]+cntr[1]
