@@ -393,19 +393,23 @@ with tab1:
         download_object = io.BytesIO()
         doc.save(download_object)
 
-        # ---------------- SAVE TO DB WHEN DOWNLOADED -----------------
+       # Prepare bytes for download
+        download_object.seek(0)
+        report_bytes = download_object.getvalue()
+        
         if st.download_button(
-            "Download Report",
-            data=download_object,
-            file_name=f"litmus_{now.strftime('%m_%d_%y_%H_%M_%S')}.docx"
+            label="Download Report",
+            data=report_bytes,
+            file_name=f"litmus_{now.strftime('%m_%d_%y_%H_%M_%S')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ):
             try:
                 fig_mem.seek(0)
                 image_bytes = fig_mem.getvalue()
-
+        
                 conn = get_connection()
                 cur = conn.cursor()
-
+        
                 cur.execute("""
                     INSERT INTO litmus_results (
                         timestamp,
@@ -421,15 +425,17 @@ with tab1:
                     spray_cell,
                     chemical_type,
                     disp,
-                    float(spray_width.mean()) if characterize else None,   # Option A
-                    float(deflection.mean()) if characterize else None,    # Option A
+                    float(spray_width.mean()) if characterize else None,
+                    float(deflection.mean()) if characterize else None,
                     psycopg2.Binary(image_bytes)
                 ))
-
+        
                 conn.commit()
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
+        
                 st.success("Record saved to database!")
-
+        
             except Exception as e:
                 st.error("Database save failed.")
                 st.write(str(e))
