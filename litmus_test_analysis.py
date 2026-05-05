@@ -629,11 +629,36 @@ with tab1:
                 disp = 'FAIL: spray pattern edge detection unsuccessful'
                 st.write("#### :red[{}]".format(disp))   
 with tab2:
+    
     st.header("Database History")
     
     # Connect to DB and load minimal columns first
-    conn = get_connection()
-    df = pd.read_sql("""
+    
+    st.subheader("Filters")
+
+    # Spray Cell Filter
+    filter_cell = st.selectbox(
+        "Filter by Spray Cell",
+        options=["All", 1, 2, 3, 4],
+        index=0
+    )
+
+    # Chemical Type Filter
+    filter_chem = st.selectbox(
+        "Filter by Chemical Type",
+        options=["All", "M1b", "Glass", "MALP"],
+        index=0
+    )
+
+    # Date Filter (Single Day)
+    filter_date = st.date_input(
+        "Filter by Date (PST)",
+        value=None,
+        help="Select a specific day to show results from that date."
+    )
+
+    # Build SQL Query with Filters
+    query = """
         SELECT 
             id,
             timestamp,
@@ -641,15 +666,30 @@ with tab2:
             chemical_type,
             pass_fail
         FROM litmus_results
+        WHERE (%s = 'All' OR spray_cell = %s)
+          AND (%s = 'All' OR chemical_type = %s)
+          AND (%s IS NULL OR DATE(timestamp AT TIME ZONE 'America/Los_Angeles') = %s)
         ORDER BY timestamp DESC
-    """, conn)
+    """
+
+    params = (
+        filter_cell, filter_cell,
+        filter_chem, filter_chem,
+        filter_date, filter_date
+    )
+
+    # Load filtered data
+    conn = get_connection()
+    df = pd.read_sql(query, conn, params=params)
     conn.close()
-    
+
+    # Display table
     st.dataframe(df, use_container_width=True)
-    
+
     st.subheader("View Record Details")
-    
+
     record_id = st.number_input("Enter Record ID to view full details:", min_value=1, step=1)
+
     
     if st.button("Load Record"):
     
