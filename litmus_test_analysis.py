@@ -41,6 +41,8 @@ st.markdown(
 
 
 ### Force the scrollbar to be a constant width. 
+    # On some browsers, the scrollbar constantly switches back and forth between its thicker mouseover state
+    # and its thinner non-mouseover state causing the page to resize cyclically.
 st.markdown("""
                 <html>
                     <head>
@@ -84,10 +86,11 @@ with st.sidebar:
 
     if auto_crop:
         st.markdown(body = "\n\n")
-        st.markdown(body = """:grey[NOTE: Auto-crop is optimized for high contrast backgrounds (e.g., open scanner lid).]""")
+        st.markdown(body = """:grey[NOTE: The new auto-crop feature is still being tested and will likely not be completely reliable.
+                    This feature is very sensitive to the condition of the edges of the litmus paper. Straight, clean cut edges will produce the best result.]""")
 
-### Set the standard image resolution used (Default to 96, but will update from file)
-image_dpi = 96
+### Set the standard image resolution used to 200 dpi
+image_dpi = 200
 
 ### Create a page header and seperate the page into columns for instructions, image results, and measurement results.      
 st.header('Auto-Oxi Litmus Test Characterization')
@@ -99,7 +102,7 @@ with crop_col:
 with inst_col:
     st.markdown(
         body = """Instructions:
-        \n1. After the litmus paper has dried, scan the paper using a .jpg file type at **96 DPI** or **200 DPI**.
+        \n1. After the litmus paper has dried, scan the paper using a .jpg file type and an image resolution of 200 dpi.
         \n2. Upload the image to the "File Input" area on the left sidebar.
         \n3. Crop the image so that the edges of the litmus paper are just out of frame. If cropping manually, check the "Done Cropping" box to proceed with analysis.
         \n4. Confirm that the white dashed line correctly aligns with the centerline drawn on the litmus paper. 
@@ -119,83 +122,88 @@ with val_col:
 # Image processing section
 ############################
 
-# Initialize crop_done to prevent NameError
-if auto_crop:
-    crop_done = False
-
 ### If an image has been uploaded, proceed.
 if uploaded_image != None:
     image = skimage.io.imread(uploaded_image)
-    h, w, _ = image.shape
 
     ### Read input image metatdata to identify the image resolution
     meta_img = Image.open(uploaded_image)
-    # Use .get() to safely handle images without DPI metadata, defaulting to 96
-    input_dpi = meta_img.info.get('dpi', (96, 96))
-    
-    ### Actions taken if the image DPI is not standard
-    if not (int(input_dpi[0]) in [96, 200]):
-        disp = 'WARNING: Input image resolution is {}. Expected 96 or 200 DPI.'.format(input_dpi)
+    meta_dict = meta_img.info
+    input_dpi = meta_dict['dpi']
+
+    ### Actions taken if the image DPI does not match the expected value of 200
+    if not ((input_dpi[0] == 200) & (input_dpi[1] == 200)):
+        disp = 'WARNING: Input image resolution did not match the expected resolution of 200 DPI. The input image resolution is {}.'.format(input_dpi)
         st.error(disp, icon="⚠️")
-    
-    # Update global DPI variable to match the image
-    image_dpi = input_dpi[0]
+        if input_dpi[0] == input_dpi[1]:
+            image_dpi = input_dpi[0]
 
     ### Auto-crop function
     if auto_crop:
         try:
-            # UPDATED: More robust auto-crop using Lightness Thresholding (Better for 96 DPI)
-            l_chan = rgb2lab(image)[:, :, 0]
-            paper_mask = l_chan > threshold_otsu(l_chan)
+            segments = skimage.segmentation.slic(image, n_segments = 3, convert2lab = True)
+            unborder = skimage.segmentation.clear_border(labels = segments, buffer_size = 0)
+            mask = unborder > 0
+            mask = np.stack([mask, mask, mask], axis = 2)
+            m_image = np.ma.masked_where(~mask, image)
+    
+            ### First round of cropping
+            tc, bc, lc, rc = 0,0,0,0
             
-            # Remove noise (Scaled by DPI)
-            clean_size = int(500 * (image_dpi/200))
-            paper_mask = remove_small_objects(paper_mask, min_size=clean_size)
-            paper_mask = remove_small_holes(paper_mask, area_threshold=clean_size)
-
-            coords = np.column_stack(np.where(paper_mask))
+            for row in range(0, m_image.shape[0]):
+                if not m_image.mask[row,:,:].all():
+                    tc = row
+                    break
+            for row in range(m_image.shape[0]-1, 0, -1):
+                if not m_image.mask[row,:,:].all():
+                    bc = m_image.shape[0] - row
+                    break
             
-            if coords.size > 0:
-                y_min, x_min = coords.min(axis=0)
-                y_max, x_max = coords.max(axis=0)
-                
-                # Assign crop values
-                tc = int(y_min + 5)
-                bc = int(h - y_max + 5)
-                lc = int(x_min + 5)
-                rc = int(w - x_max + 5)
-                
-                crop_done = True
-            else:
-                # Fallback if paper not found
-                tc, bc, lc, rc = 0, 0, 0, 0
-                st.error('Auto-crop was unable to identify the boundaries. Please use manual cropping.', icon="⚠️")
+            acceptance_rate = 0.2
+            
+            for col in range(0, m_image.shape[1]):
+                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
+                #if not m_image.mask[:,col,:].all():
+                    lc = col
+                    break
+            for col in range(m_image.shape[1]-1, 0, -1):
+                if m_image.mask[tc:m_image.shape[0]-bc, col, :].sum() / np.ma.count(m_image.mask[tc:m_image.shape[0]-bc, col, :]) <= acceptance_rate:
+                #if not m_image.mask[:,col,:].all():
+                    rc = m_image.shape[1] - col
+                    break
+            for row in range(m_image.shape[0] - bc,0,-1):
+                if m_image.mask[row, lc:m_image.shape[1]-rc, :].sum() / np.ma.count(m_image.mask[row, lc:m_image.shape[1]-rc, :]) <= acceptance_rate:
+                    bc = m_image.shape[0]-row
+                    break
 
-        except Exception as e:
-            tc, bc, lc, rc = 0, 0, 0, 0
+        except:
             with crop_placeholder.container():
-                st.error(f'Auto-crop error: {e}. Please use manual cropping.', icon="⚠️")
+                st.error('Auto-crop was unable to identify the boundaries of the litmus paper in the submitted image. Please use manual cropping.', icon="⚠️")
             
-    ### Ensure crop variables exist if manual
-    if not auto_crop:
-        # Variables tc, bc, lc, rc come from the sidebar widgets
-        pass 
-        
+        if not (tc>0)&(bc>0)&(lc>0)&(rc>0):
+            #crop_segments, ax = plt.subplots()
+            #ax.imshow(skimage.segmentation.mark_boundaries(image, segments, mode = 'thick', color = (1,0.1,0.6)))
+            with crop_placeholder.container():
+                st.error('Auto-crop was unable to identify the boundaries of the litmus paper in the submitted image. Please use manual cropping.', icon="⚠️")
+            #with image_placeholder.container():
+            #    st.write(crop_segments)
+            st.stop()
+        else:
+            crop_done = True
+                
     ### Crop the image according to the user's inputs on the sidebar
-    # Wrapping in try/except to handle case where manual inputs aren't ready
-    try:
-        cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
-    except:
-        cropped_image = image
+    cropped_image = skimage.util.crop(image, ((tc, bc), (lc, rc), (0,0)))
 
-    ### Create an image that shows red lines at the boundaries
+    ### Create an image that shows red lines at the boundaries of the user's cropping inputs so that they can confirm their borders are correct.
     extend = 20
     crop_check, ax = plt.subplots()
-    ax.imshow(image)
+    if auto_crop:
+        ax.imshow(skimage.segmentation.mark_boundaries(image, unborder, mode = 'thick', color = (1,0.1,0.6)))
+    else:
+        ax.imshow(image)
     ax.set_xlim(0,image.shape[1])
     ax.set_ylim(image.shape[0],0)
     ax.tick_params(labelsize = 6)
-    # Ensure lines draw even if crop values are 0
     ax.plot([lc-extend,image.shape[1]-rc+extend],[image.shape[0]-bc,image.shape[0]-bc], color = 'red', lw = 0.8, alpha =  0.6)
     ax.plot([lc-extend,image.shape[1]-rc+extend],[tc,tc], color = 'red', lw = 0.8, alpha = 0.6)
     ax.plot([lc,lc],[image.shape[0]-bc+extend,tc-extend], color = 'red', lw = 0.8, alpha = 0.6)
@@ -213,78 +221,59 @@ if crop_done:
     ### If the user chooses to edit the centerline threshold, use their input threshold
     if edit_center:
         g_thresh = m_thresh
-    ### Otherwise, use the threshold_otsu function
+    ### Otherwise, use the threshold_otsu function to automatically select a threshold based on the range of lightness values in the image.
     else:
         g_thresh = threshold_otsu(gray_img)
 
-    ### Use masking to limit the area
+    ### Use masking to limit the area in which the centerline can be identified to a horizontal band in the middle of the image.
+        ### This prevents the handwritten text or lines indicating areas to write on the litmus sheet from being accidentally identified as the centerline.
     mask = gray_img < g_thresh
     mask_top = int(0.35*mask.shape[0])
     mask_bot = int(0.65*mask.shape[0])
     mask[:mask_top] = 0
     mask[mask_bot:] = 0
         
-    ### Find candidate straight lines using a straight line Hough transform.
+    ### Find candidate straight lines using a straight line Hough transform. The longest distance straight line identified will be used.
     tested_angles = np.linspace(-np.pi/2, np.pi/2, 360, endpoint = False)
-    h_lines, theta, d = hough_line(mask, theta = tested_angles)
-    _, angle, dist = hough_line_peaks(h_lines, theta, d, num_peaks = 1)
-    
-    # Safety check if no lines found
-    if len(angle) > 0:
-        angle = angle[0]
-        slope = np.tan(angle + np.pi/2)
-        (x0, y0) = dist * np.array([np.cos(angle), np.sin(angle)])
-        cntr = (x0, y0, slope)
-    else:
-        # Default horizontal center if fails
-        cntr = (0, cropped_image.shape[0]/2, 0)
+    h, theta, d = hough_line(mask, theta = tested_angles)
+    _, angle, dist = hough_line_peaks(h, theta, d, num_peaks = 1)
+    angle = angle[0]
+    slope = np.tan(angle + np.pi/2)
+    (x0, y0) = dist * np.array([np.cos(angle), np.sin(angle)])
+    cntr = (x0, y0, slope)
 
-    ### Use the 'a' channel (Red-Green) instead of 'b' for better red detection
-    red_img = rgb2lab(cropped_image)[:,:,1] 
-
-    ### Mask off the black pixels of the centerline
+    ### Use the red/green channel of the LAB colorspace image to identify the edges of the sprayed area.
+    red_img = rgb2lab(cropped_image)[:,:,2]
+    ### Mask off the black pixels of the centerline to prevent it from being identified as a spray pattern edge
     y_end = cntr[2]*mask.shape[1]+cntr[1]
     mask_top = int(min(cntr[1], y_end) - 0.02*mask.shape[0])
     mask_bot = int(max(cntr[1], y_end) + 0.02*mask.shape[0])
     mask[:mask_top,:] = 0
     mask[mask_bot:,:] = 0
-    
     r_thresh = threshold_otsu(red_img)
     red_masked = red_img + r_thresh*mask
+    ### Blur the red filtered image by a constant value to deal with small droplets at the edge of the spray band.
+    blr_img = ndi.uniform_filter(red_masked, size = 0.2*image_dpi)
+    ### Use the remove small holes and remove small objects to clean up small gaps inside the sprayed area and small droplets outside the sprayed area.
+        ### This ensures that only two edges (top and bottom) are identified for the spray band rather than an edge around every small gap or droplet.
+    spray_mask = remove_small_holes(remove_small_objects(blr_img > r_thresh, image_dpi*100), image_dpi*200)
     
-    ### Blur the red filtered image
-    # Scale blur by DPI to match original 200dpi behavior
-    blur_val = int(0.2 * image_dpi)
-    blr_img = ndi.uniform_filter(red_masked, size = blur_val)
     
-    ### Clean up gaps
-    # Scale cleaning objects by DPI (area scales quadratically)
-    obj_size = int((0.15 * image_dpi)**2) # roughly corresponds to original ratio
-    hole_size = int((0.25 * image_dpi)**2)
-    
-    spray_mask = remove_small_holes(remove_small_objects(blr_img > r_thresh, obj_size), hole_size)
-    
-    ### Find contours
+    ### Use the find contours function to identify the pixels at the top and bottom edge of the spray band.
     spray_contours = find_contours(spray_mask)
-    
-    ### UPDATED: Robust Edge Selection
-    # If we find 2 OR MORE edges, pick the two longest ones (removes noise)
-    if len(spray_contours) >= 2:
-        # Sort by length (longest first)
-        sorted_contours = sorted(spray_contours, key=lambda c: len(c), reverse=True)
-        best_two = sorted_contours[:2]
-        
-        # Sort these two by Y-position (Top vs Bottom)
-        best_two = sorted(best_two, key=lambda c: np.mean(c[:,0]))
-        
-        top_y, top_x = best_two[0][:,0], best_two[0][:,1]
-        bot_y, bot_x = best_two[1][:,0], best_two[1][:,1]
-        
+    ### If exactly two edges are found, proceed.
+    if len(spray_contours) == 2:
+        bot_x = spray_contours[1][:,1]
+        bot_y = spray_contours[1][:,0]
+        top_x = spray_contours[0][:,1]
+        top_y = spray_contours[0][:,0]
         characterize = True
+    ### Otherwise, return a failure message because the expected number of edges were not found.
     else:
         characterize = False
         
     ### Select the conversion scale of pixels to inches
+        ### This can be found in the properties of the photo (often called DPI - dots per inch). In this case, the standard DPI was identified earlier in the code.
     pix_in = image_dpi
 
     #####################
@@ -293,68 +282,77 @@ if crop_done:
 
     ### If two edges were identified, proceed
     if characterize:
+        ### Use interpolation to turn the top and bottom edges into an array of one y value for each pixel on the x-axis (width).
+            ### This allows the edges to be treated like functions and have mathematical operations performed on them.
         x = np.arange(0, cropped_image.shape[1]+1, 1)
         bot_interp = intp(bot_x, bot_y, assume_sorted = False, fill_value = 'extrapolate')(x)
         top_interp = intp(top_x, top_y, assume_sorted = False, fill_value = 'extrapolate')(x)
+        ### Use the slope and y-intercept of the centerline previously identifed to create a centerline array at each x point.
         center = cntr[2] * x + cntr[1]
-        
+        ### Spray width array is the number of pixels between the top and bottom edges at each x point divided by the number of pixels per inch.
         spray_width = abs(top_interp - bot_interp) / pix_in
+        ### Determine the widht of the spray band above and below the centerline.
         bot_height = (bot_interp - center) / pix_in
         top_height = (center - top_interp) / pix_in
+        ### Take the average of the top and bottom edge arrays to find the array of the apparent center of the spray band
         apparent_center = np.mean([top_interp, bot_interp], axis = 0)
+        ### Use the apparent center of the spray band to calculate the angle of deflection of the spray band at each x point.
         deflection = np.arctan(((center - apparent_center)/pix_in) / 1) * (180/np.pi)
+        ### Create a display x array in inches to match the units of the other measurement arrays.
         disp_x = x / pix_in
 
-    ### Generate the resultant image using plt.subplots (Robust Method)
-    fig, ax = plt.subplots(dpi = image_dpi)
-    ax.imshow(cropped_image)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_axis_off()
+    ### Generate the resultant image showing the identified centerline and spray edges overlaid on the cropped spray pattern image.
+    fig, ax = plt.subplot_mosaic("A", dpi = 200)
+    ax['A'].imshow(cropped_image)
+    ax['A'].set_xticks([])
+    ax['A'].set_yticks([])
 
+    ### If two spray pattern edges were successfully identified...
     if characterize:
-        ax.plot(bot_x, bot_y, color = 'black', lw = 1)
-        ax.plot(top_x, top_y, color = 'black', lw = 1)
+        ax['A'].plot(bot_x, bot_y, color = 'black', lw = 1)
+        ax['A'].plot(top_x, top_y, color = 'black', lw = 1)
         
+        ### Use a white outward pointing arrow to identify the maximum spray pattern width.
         max_loc = np.argmax(spray_width)
-        ax.scatter([x[max_loc]], [bot_interp[max_loc]], marker = 7, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
-        ax.scatter([x[max_loc]], [top_interp[max_loc]], marker = 6, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
-        ax.plot([x[max_loc], x[max_loc]], [bot_interp[max_loc], top_interp[max_loc]], color = 'white', lw = 1, ls = (0,(2,2)), alpha = 0.5)
+        ax['A'].scatter([x[max_loc]], [bot_interp[max_loc]], marker = 7, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
+        ax['A'].scatter([x[max_loc]], [top_interp[max_loc]], marker = 6, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
+        ax['A'].plot([x[max_loc], x[max_loc]], [bot_interp[max_loc], top_interp[max_loc]], color = 'white', lw = 1, ls = (0,(2,2)), alpha = 0.5)
         
+        ### Use a white inward pointing arrow to identify the minimum spray pattern width.
         min_loc = np.argmin(spray_width)
-        ax.scatter([x[min_loc]], [bot_interp[min_loc]], marker = 6, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
-        ax.scatter([x[min_loc]], [top_interp[min_loc]], marker = 7, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
-        ax.plot([x[min_loc], x[min_loc]], [bot_interp[min_loc], top_interp[min_loc]], color = 'white', lw = 1, ls = (0,(2,2)), alpha = 0.5)
+        ax['A'].scatter([x[min_loc]], [bot_interp[min_loc]], marker = 6, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
+        ax['A'].scatter([x[min_loc]], [top_interp[min_loc]], marker = 7, color = 'white', zorder = 4, alpha = 0.5, clip_on = False)
+        ax['A'].plot([x[min_loc], x[min_loc]], [bot_interp[min_loc], top_interp[min_loc]], color = 'white', lw = 1, ls = (0,(2,2)), alpha = 0.5)
         
+        ### Use a red outward pointing arrow to identify the maximum deflection and its direction.
         max_loc = np.argmax(deflection)
         if deflection.max() > 0:
-            ax.scatter([x[max_loc]], [top_interp[max_loc]], marker = 6, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
-            ax.plot([x[max_loc], x[max_loc]], [center[max_loc], top_interp[max_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
+            ax['A'].scatter([x[max_loc]], [top_interp[max_loc]], marker = 6, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
+            ax['A'].plot([x[max_loc], x[max_loc]], [center[max_loc], top_interp[max_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
         else:
-            ax.scatter([x[max_loc]], [bot_interp[max_loc]], marker = 6, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
-            ax.plot([x[max_loc], x[max_loc]], [center[max_loc], bot_interp[max_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
+            ax['A'].scatter([x[max_loc]], [bot_interp[max_loc]], marker = 6, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
+            ax['A'].plot([x[max_loc], x[max_loc]], [center[max_loc], bot_interp[max_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
             
+        ### Use a red inward pointing arrow to identify the minimum deflection and its direction.
         min_loc = np.argmin(deflection)
         if deflection.min() > 0:
-            ax.scatter([x[min_loc]], [top_interp[min_loc]], marker = 7, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
-            ax.plot([x[min_loc], x[min_loc]], [center[min_loc], top_interp[min_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
+            ax['A'].scatter([x[min_loc]], [top_interp[min_loc]], marker = 7, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
+            ax['A'].plot([x[min_loc], x[min_loc]], [center[min_loc], top_interp[min_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
         else:
-            ax.scatter([x[min_loc]], [bot_interp[min_loc]], marker = 7, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
-            ax.plot([x[min_loc], x[min_loc]], [center[min_loc], bot_interp[min_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
+            ax['A'].scatter([x[min_loc]], [bot_interp[min_loc]], marker = 7, color = 'red', zorder = 4, alpha = 0.5, clip_on = False)
+            ax['A'].plot([x[min_loc], x[min_loc]], [center[min_loc], bot_interp[min_loc]], color = 'red', lw = 1, ls = (2,(2,2)), alpha = 0.5)
     else:
-        # If characterization failed, show the contours found so user can debug
-        ax.contour(spray_mask, colors = 'black')
+        ax['A'].contour(spray_mask, colors = 'black')
 
-    # Draw Centerline
-    ax.axline((cntr[0], cntr[1]), slope = cntr[2], ls = (0,(4,4)), color = 'white', lw = 1.5)   
-    ax.set_xlim(0,cropped_image.shape[1])
-    ax.set_ylim(cropped_image.shape[0],0)
-    
-    ### Save the resultant image
+    ### Use a white dashed line to mark the identified centerline. If it lines up with the actual centerline, it should result in a white-black alternating dashed line.
+    ax['A'].axline((cntr[0], cntr[1]), slope = cntr[2], ls = (0,(4,4)), color = 'white', lw = 1.5)   
+    ax['A'].set_xlim(0,cropped_image.shape[1])
+    ax['A'].set_ylim(cropped_image.shape[0],0)
+    ### Save the resultant image to memory for later access when generating a report.
     fig_mem = io.BytesIO()
     plt.savefig(fig_mem, bbox_inches = 'tight', pad_inches = 0)
 
-    ### Summarize the spray band measurements
+    ### Summarize the spray band measurements in a table which will be shown to the right of the image output.
     if characterize:
         results = pd.DataFrame()
         results.loc['Spray Pattern Width (in.)', 'mean'] = spray_width.mean()
@@ -374,11 +372,11 @@ if crop_done:
         results.loc['Spray Cone Deflection (deg.)', 'min.'] = deflection.min()
         results.loc['Spray Cone Deflection (deg.)', 'max.'] = deflection.max()        
 
-    ### Show the final image
+    ### Show the final image in the image placeholder container location.
     with image_placeholder.container():
-        st.pyplot(fig)
+        st.write(fig)
 
-    ### Display the results table
+    ### Display the results table inthe values placeholder container location.
     with values_placeholder.container():
         if characterize:
             st.subheader('Analysis Results')
@@ -387,30 +385,40 @@ if crop_done:
     ##################################
     # Spray Pattern Pass/Fail Criteria
     ##################################
+
+            ### Fail if the mean spray width is not a number.
             if np.isnan(spray_width.mean()):
                 disp = 'FAIL: spray pattern edge detection unsuccessful'
                 st.write("#### :red[{}]".format(disp))
+            ### Fail if the mean spray width is less than one inch.
             elif spray_width.mean() < 1:
                 disp = 'FAIL: mean spray width must be >1 in.'
                 st.write("#### :red[{}]".format(disp))
+            ### Fail if the mean spray width is greater than two inches
             elif spray_width.mean() > 2:
                 disp = 'FAIL: mean spray width must be <2 in.'
                 st.write('#### :red[{}]'.format(disp))
+            ### Fail if the mean deflection is greater than 10 degrees in either direction.
             elif abs(deflection.mean()) > 10:
                 disp = 'FAIL: mean deflection angle must be <10°'
                 st.write("#### :red[{}]".format(disp))
+            ### Fail if the max deflection and min deflection are too far apart, indicating a spray band that is misaligned with the centerline.
             elif (deflection.max() - deflection.min()) > 15:
                 disp = 'FAIL: deflection range too large'
                 st.write("#### :red[{}]".format(disp))
+            ### Fail if a very large maximum deflection angle is present, indicating a drip may have been included in the identified spray band.
             elif abs(deflection).max() > 18:
                 disp = 'FAIL: suspected drip inclusion'
                 st.write("#### :red[{}]".format(disp))
+            ### If none of the failure conditions were present, the test passes.
             else:
                 disp = 'PASS'
                 st.write("### :green[{}]".format(disp))
 
+            ### Create a placeholder for the report download button under the measurement summary table.
             button_place = st.empty()
 
+            ### Display the pass/fail criteria to the user
             st.divider()
             st.markdown(
                 body = """\nPass Criteria:
@@ -425,22 +433,27 @@ if crop_done:
 # Output Result Section
 #######################
 
+            ### Initialize a word document.
             doc = docx.Document()
+            ### Set up document margins
             section = doc.sections[-1]
             section.left_margin = docx.shared.Inches(0.75)
             section.right_margin = docx.shared.Inches(0.75)
             section.top_margin = docx.shared.Inches(0.75)
             section.bottom_margin = docx.shared.Inches(0.75)
+            ### Add a title to the document
             title = doc.add_paragraph() 
             title.paragraph_format.space_after = 0
             title_run = title.add_run('Litmus Test Characterization Report')
             title_run.font.size = docx.shared.Pt(18)
             title_run.font.name = 'Arial'
             title_run.underline = True
+            ### Add the date that the report was generated
             date = doc.add_paragraph()
             date_run = date.add_run(datetime.datetime.now().strftime('%B %d, %Y - %I:%M %p'))
             date_run.font.size = docx.shared.Pt(10)
             date_run.font.name = 'Arial'
+            ### Add text specifying the outcome of the litmus test (pass or fail).
             pf = doc.add_paragraph()
             pf_run = pf.add_run(disp)
             if disp == 'PASS':
@@ -450,10 +463,9 @@ if crop_done:
             pf_run.font.size = docx.shared.Pt(16)
             pf_run.font.name = 'Arial'
             pf_run.bold = True
-            
-            # Use pix_in for scaling image in word doc
+            ### Add the resultant image of the spray pattern with the centerline and edge lines overlaid.
             spray_pic = doc.add_picture(fig_mem, height = docx.shared.Inches(cropped_image.shape[1]/pix_in))
-            
+            ### If the user selected their own centerline threshold, indicate that in the report.
             if edit_center:
                 pic_p = doc.paragraphs[-1]
                 pic_p.paragraph_format.space_after = 0
@@ -462,17 +474,16 @@ if crop_done:
                 center_run = center_p.add_run('Centerline threshold adjusted to {}'.format(m_thresh))
                 center_run.font.size = docx.shared.Pt(8)
                 center_run.font.name = 'Arial'
-            
-            # Updated DPI check for the report
-            if image_dpi not in [96, 200]:
+            ### If the DPI is not 200, document it.
+            if image_dpi != 200:
                 dpi_p = doc.paragraphs[-1]
                 dpi_p.paragraph_format.space_after = 0
                 center_p = doc.add_paragraph()
                 center_p.paragraph_format.space_before = 0
-                center_run = center_p.add_run('Image resolution {} DPI. Expected 96 or 200 DPI.'.format(image_dpi))
+                center_run = center_p.add_run('Image resolution did not match expected 200 DPI. Input image resolution was {}. This may affect dimensional measurements.'.format(image_dpi))
                 center_run.font.size = docx.shared.Pt(8)
                 center_run.font.name = 'Arial'
-            
+            ### Add a table of the summarized spray band measurements.
             table = doc.add_table(results.shape[0]+1, results.shape[1]+1)
             for i in range(results.shape[0]):
                 table.cell(i+1,0).text = results.index[i]
@@ -488,14 +499,15 @@ if crop_done:
             table.style.font.name = 'Arial'
             table.allow_autofit = True
 
+            ### Save the report in memory so that it is ready for the user to download.
             download_object = io.BytesIO()
             doc.save(download_object)
 
+            ### Use the previously created button container to provide a download button where the user can download the final report.
             with button_place.container():
                 st.download_button(label = 'Download Report', data = download_object, file_name = 'litmus_test_report_{}.docx'.format(datetime.datetime.now().strftime('%m_%d_%y_%H_%M_%f')))
 
+        ### Edge detection failure message if the number of edges found is anything other than two.
         else:
             disp = 'FAIL: spray pattern edge detection unsuccessful'
-            st.write("#### :red[{}]".format(disp))
-            with image_placeholder.container():
-                 st.image(spray_mask.astype(float), caption="Debug: Edge Detection Failed")
+            st.write("#### :red[{}]".format(disp))   
