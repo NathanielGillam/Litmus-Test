@@ -160,7 +160,9 @@ with tab1:
     # Require user selections
     if spray_cell == "-- Select --" or chemical_type == "-- Select --":
         st.warning("Please select both Spray Cell Number and Chemical Type before uploading an image.")
-        st.stop()
+        # Do NOT stop the whole script — just skip tab1 content
+        st.stop() if st.session_state.get("active_tab") == "Litmus Test" else None
+
 
     ### Write out instructions on the use of the tool in the instruction column of the page.
     with inst_col:
