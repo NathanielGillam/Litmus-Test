@@ -641,9 +641,9 @@ with tab1:
                         
                                     st.success("Record saved to database ✔")
                         
-                                except Exception as e:
-                                    st.error("Failed to save to database ❌")
-                                    st.write(str(e))
+                        except Exception as e:
+                            st.error("Failed to save to database ❌")
+                            st.write(str(e))
                         
 
     
