@@ -477,33 +477,6 @@ with tab1:
                 else:
                     disp = 'PASS'
                     st.write("### :green[{}]".format(disp))
-              
-                current_time = datetime.datetime.now(pst)
-                
-                cur.execute("""
-                INSERT INTO litmus_results (
-                    timestamp,
-                    spray_cell,
-                    chemical_type,
-                    pass_fail,
-                    mean_width,
-                    mean_deflection,
-                    output_image
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    current_time,
-                    spray_cell,
-                    chemical_type,
-                    disp,
-                    float(spray_width.mean()),
-                    float(deflection.mean()),
-                    psycopg2.Binary(output_image_bytes)
-                ))
-                
-                conn.commit()
-                cur.close()
-                conn.close()
-    
     
     
                 ### Create a placeholder for the report download button under the measurement summary table.
