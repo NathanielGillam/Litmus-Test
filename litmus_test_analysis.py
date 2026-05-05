@@ -108,13 +108,16 @@ with st.sidebar:
 
     spray_cell = st.selectbox(
         "Spray Cell Number",
-        options=[1, 2, 3, 4]
+        options=["-- Select --", 1, 2, 3, 4],
+        index=0
     )
-    
+
     chemical_type = st.selectbox(
         "Chemical Type",
-        options=["M1", "Glass", "MALP"]
+        options=["-- Select --", "M1b", "Glass", "MALP"],
+        index=0
     )
+
 
 
     uploaded_image = st.file_uploader(label = '', type = ['jpg'], label_visibility = 'collapsed')
@@ -138,6 +141,11 @@ with st.sidebar:
         st.markdown(body = "\n\n")
         st.markdown(body = """:grey[NOTE: The new auto-crop feature is still being tested and will likely not be completely reliable.
                     This feature is very sensitive to the condition of the edges of the litmus paper. Straight, clean cut edges will produce the best result.]""")
+
+# Require user selections
+if spray_cell == "-- Select --" or chemical_type == "-- Select --":
+    st.warning("Please select both Spray Cell Number and Chemical Type before uploading an image.")
+    st.stop()
 
 ### Set the standard image resolution used to 200 dpi
 image_dpi = 200
