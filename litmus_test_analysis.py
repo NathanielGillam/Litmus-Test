@@ -653,13 +653,13 @@ with tab2:
     chem_param = None if filter_chem == "All" else filter_chem
     date_param = filter_date if filter_date else None
     
-    # SQL Query
+    # SQL Query - Convert the UTC storage back to PST for display
     query = """
         SELECT 
-            id,
-            timestamp,
-            spray_cell,
-            chemical_type,
+            id, 
+            timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles' AS timestamp, 
+            spray_cell, 
+            chemical_type, 
             pass_fail
         FROM litmus_results
         WHERE (%s IS NULL OR spray_cell = %s)
@@ -713,6 +713,9 @@ with tab2:
             st.error("Record not found.")
         else:
             timestamp, cell, chem, pf, mw, md, image_bytes = row
+
+            # Convert the UTC timestamp from the database back to PST for display
+            local_time = timestamp.astimezone(pst)
     
             st.write(f"**Timestamp:** {timestamp}")
             st.write(f"**Spray Cell:** {cell}")
