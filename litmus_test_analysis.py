@@ -144,11 +144,6 @@ with st.sidebar:
         st.markdown(body = """:grey[NOTE: The new auto-crop feature is still being tested and will likely not be completely reliable.
                     This feature is very sensitive to the condition of the edges of the litmus paper. Straight, clean cut edges will produce the best result.]""")
 
-# Require user selections
-if spray_cell == "-- Select --" or chemical_type == "-- Select --":
-    st.warning("Please select both Spray Cell Number and Chemical Type before uploading an image.")
-    st.stop()
-
 ### Set the standard image resolution used to 200 dpi
 image_dpi = 200
 
@@ -160,7 +155,13 @@ with crop_col:
 
 tab1, tab2 = st.tabs(["Litmus Test", "Database Dashboard"])
 
-with tab1:    
+with tab1:  
+    
+    # Require user selections
+    if spray_cell == "-- Select --" or chemical_type == "-- Select --":
+        st.warning("Please select both Spray Cell Number and Chemical Type before uploading an image.")
+        st.stop()
+
     ### Write out instructions on the use of the tool in the instruction column of the page.
     with inst_col:
         st.markdown(
