@@ -680,7 +680,7 @@ with tab2:
     conn.close()
 
     if not df.empty:
-    df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %I:%M %p')
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %I:%M %p')
     
     # Display table
     st.dataframe(df, use_container_width=True)
