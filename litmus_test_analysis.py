@@ -42,7 +42,6 @@ def initialize_db():
     CREATE TABLE IF NOT EXISTS litmus_results (
         id SERIAL PRIMARY KEY,
         timestamp TIMESTAMP,
-        operator_name TEXT,
         spray_cell INTEGER,
         chemical_type TEXT,
         pass_fail TEXT,
@@ -493,17 +492,15 @@ with tab1:
                 cur.execute("""
                 INSERT INTO litmus_results (
                     timestamp,
-                    operator_name,
                     spray_cell,
                     chemical_type,
                     pass_fail,
                     mean_width,
                     mean_deflection,
                     output_image
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (
                     current_time,
-                    logged_in_user,
                     spray_cell,
                     chemical_type,
                     disp,
@@ -553,7 +550,7 @@ with tab1:
                 title_run.underline = True
                 ### Add the date that the report was generated
                 date = doc.add_paragraph()
-                date_run = date.add_run(datetime.datetime.now().strftime('%B %d, %Y - %I:%M %p'))
+                date_run = date.add_run(current_time.strftime('%B %d, %Y - %I:%M %p'))
                 date_run.font.size = docx.shared.Pt(10)
                 date_run.font.name = 'Arial'
                 ### Add text specifying the outcome of the litmus test (pass or fail).
@@ -623,7 +620,6 @@ with tab2:
         SELECT 
             id,
             timestamp,
-            operator_name,
             spray_cell,
             chemical_type,
             pass_fail
@@ -645,7 +641,6 @@ with tab2:
         cur.execute("""
             SELECT
                 timestamp,
-                operator_name,
                 spray_cell,
                 chemical_type,
                 pass_fail,
@@ -662,10 +657,9 @@ with tab2:
         if row is None:
             st.error("Record not found.")
         else:
-            timestamp, op, cell, chem, pf, mw, md, image_bytes = row
+            timestamp, cell, chem, pf, mw, md, image_bytes = row
     
             st.write(f"**Timestamp:** {timestamp}")
-            st.write(f"**Operator:** {op}")
             st.write(f"**Spray Cell:** {cell}")
             st.write(f"**Chemical Type:** {chem}")
             st.write(f"**Result:** {pf}")
