@@ -41,7 +41,7 @@ def initialize_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS litmus_results (
         id SERIAL PRIMARY KEY,
-        timestamp TIMESTAMP,
+        timestamp TIMESTAMPTZ,
         spray_cell INTEGER,
         chemical_type TEXT,
         pass_fail TEXT,
@@ -477,15 +477,6 @@ with tab1:
                 else:
                     disp = 'PASS'
                     st.write("### :green[{}]".format(disp))
-    
-                ### NEON Data write
-    
-                ### Convert annotated spray image figure to bytes
-                fig_mem.seek(0)
-                output_image_bytes = fig_mem.getvalue()
-                
-                conn = get_connection()
-                cur = conn.cursor()
               
                 current_time = datetime.datetime.now(pst)
                 
@@ -605,14 +596,63 @@ with tab1:
     
                 ### Use the previously created button container to provide a download button where the user can download the final report.
                 with button_place.container():
-                    st.download_button(label = 'Download Report', data = download_object, file_name = 'litmus_test_report_{}.docx'.format(datetime.datetime.now().strftime('%m_%d_%y_%H_%M_%f')))
+
+                    if st.download_button(
+                        label='Download Report',
+                        data=download_object,
+                        file_name=f'litmus_test_report_{datetime.datetime.now().strftime("%m_%d_%y_%H_%M_%f")}.docx'
+                    ):
+                        # ONLY SAVE WHEN THE REPORT IS DOWNLOADED
+                        
+                        try:
+                                    # PST timestamp at moment of saving
+                                    current_time = datetime.datetime.now(pst)
+                        
+                                    # Convert output image to bytes
+                                    fig_mem.seek(0)
+                                    output_image_bytes = fig_mem.getvalue()
+                        
+                                    conn = get_connection()
+                                    cur = conn.cursor()
+                        
+                                    cur.execute("""
+                                        INSERT INTO litmus_results (
+                                            timestamp,
+                                            spray_cell,
+                                            chemical_type,
+                                            pass_fail,
+                                            mean_width,
+                                            mean_deflection,
+                                            output_image
+                                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """, (
+                                        current_time,
+                                        spray_cell,
+                                        chemical_type,
+                                        disp,
+                                        float(spray_width.mean()),
+                                        float(deflection.mean()),
+                                        psycopg2.Binary(output_image_bytes)
+                                    ))
+                        
+                                    conn.commit()
+                                    cur.close()
+                                    conn.close()
+                        
+                                    st.success("Record saved to database ✔")
+                        
+                                except Exception as e:
+                                    st.error("Failed to save to database ❌")
+                                    st.write(str(e))
+                        
+
     
             ### Edge detection failure message if the number of edges found is anything other than two.
             else:
                 disp = 'FAIL: spray pattern edge detection unsuccessful'
                 st.write("#### :red[{}]".format(disp))   
 with tab2:
-    st.header("📊 Database History")
+    st.header("Database History")
     
     # Connect to DB and load minimal columns first
     conn = get_connection()
