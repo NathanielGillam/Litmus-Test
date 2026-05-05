@@ -1,4 +1,7 @@
 ### Import supporting libraries
+import psycopg2
+import ssl
+import getpass
 import streamlit as st
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -17,6 +20,39 @@ from skimage.morphology import remove_small_holes, remove_small_objects
 from skimage.measure import find_contours
 from PIL import Image
 from PIL.ExifTags import TAGS
+
+### Configure Neon Connection String
+NEON_CONN = "postgresql://neondb_owner:npg_RqKQsPe3U4HV@ep-billowing-waterfall-apt0oh58.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
+
+### User information
+logged_in_user = getpass.getuser()
+
+### Auto Connect to NEON
+def get_connection():
+    return psycopg2.connect(NEON_CONN, sslmode="require")
+
+### DB initialization
+def initialize_db():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS litmus_results (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP,
+        operator_name TEXT,
+        spray_cell INTEGER,
+        chemical_type TEXT,
+        pass_fail TEXT,
+        mean_width REAL,
+        mean_deflection REAL,
+        output_image BYTEA
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+initialize_db()
 
 ### Configure streamlit webpage title, icon, and page width
 st.set_option("client.toolbarMode", "minimal")
@@ -67,6 +103,20 @@ st.markdown("""
   
 ### Create the page sidebar with most of the user's controls
 with st.sidebar:
+### Some user inputs for DB reading
+    st.subheader("Test Inputs")
+
+    spray_cell = st.selectbox(
+        "Spray Cell Number",
+        options=[1, 2, 3, 4]
+    )
+    
+    chemical_type = st.selectbox(
+        "Chemical Type",
+        options=["M1", "Glass", "MALP"]
+    )
+
+
     uploaded_image = st.file_uploader(label = '', type = ['jpg'], label_visibility = 'collapsed')
     st.divider()
     st.subheader('Image Settings')
@@ -414,6 +464,43 @@ if crop_done:
             else:
                 disp = 'PASS'
                 st.write("### :green[{}]".format(disp))
+
+            ### NEON Data write
+
+            ### Convert annotated spray image figure to bytes
+            fig_mem.seek(0)
+            output_image_bytes = fig_mem.getvalue()
+            
+            conn = get_connection()
+            cur = conn.cursor()
+            
+            cur.execute("""
+            INSERT INTO litmus_results (
+                timestamp,
+                operator_name,
+                spray_cell,
+                chemical_type,
+                pass_fail,
+                mean_width,
+                mean_deflection,
+                output_image
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                datetime.datetime.now(),
+                logged_in_user,
+                spray_cell,
+                chemical_type,
+                disp,
+                float(spray_width.mean()),
+                float(deflection.mean()),
+                psycopg2.Binary(output_image_bytes)
+            ))
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+
+
 
             ### Create a placeholder for the report download button under the measurement summary table.
             button_place = st.empty()
