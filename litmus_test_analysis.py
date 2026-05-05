@@ -2,6 +2,7 @@
 import psycopg2
 import ssl
 import getpass
+import pytz
 import streamlit as st
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -26,6 +27,8 @@ NEON_CONN = "postgresql://neondb_owner:npg_RqKQsPe3U4HV@ep-billowing-waterfall-a
 
 ### User information
 logged_in_user = getpass.getuser()
+### Timestamp 
+pst = pytz.timezone("America/Los_Angeles")
 
 ### Auto Connect to NEON
 def get_connection():
@@ -481,6 +484,8 @@ if crop_done:
             
             conn = get_connection()
             cur = conn.cursor()
+          
+            current_time = datetime.datetime.now(pst)
             
             cur.execute("""
             INSERT INTO litmus_results (
@@ -494,7 +499,7 @@ if crop_done:
                 output_image
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                datetime.datetime.now(),
+                current_time,
                 logged_in_user,
                 spray_cell,
                 chemical_type,
