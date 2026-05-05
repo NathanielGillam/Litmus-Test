@@ -594,7 +594,7 @@ with tab1:
                 download_object = io.BytesIO()
                 doc.save(download_object)
     
-                ### Use the previously created button container to provide a download button where the user can download the final report.
+                ### Use the download button to kick of DB entry
                 with button_place.container():
 
                     if st.download_button(
@@ -603,46 +603,47 @@ with tab1:
                         file_name=f'litmus_test_report_{datetime.datetime.now().strftime("%m_%d_%y_%H_%M_%f")}.docx'
                     ):
                         # ONLY SAVE WHEN THE REPORT IS DOWNLOADED
-                        
                         try:
-                                    # PST timestamp at moment of saving
-                                    current_time = datetime.datetime.now(pst)
-                        
-                                    # Convert output image to bytes
-                                    fig_mem.seek(0)
-                                    output_image_bytes = fig_mem.getvalue()
-                        
-                                    conn = get_connection()
-                                    cur = conn.cursor()
-                        
-                                    cur.execute("""
-                                        INSERT INTO litmus_results (
-                                            timestamp,
-                                            spray_cell,
-                                            chemical_type,
-                                            pass_fail,
-                                            mean_width,
-                                            mean_deflection,
-                                            output_image
-                                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                    """, (
-                                        current_time,
-                                        spray_cell,
-                                        chemical_type,
-                                        disp,
-                                        float(spray_width.mean()),
-                                        float(deflection.mean()),
-                                        psycopg2.Binary(output_image_bytes)
-                                    ))
-                        
-                                    conn.commit()
-                                    cur.close()
-                                    conn.close()
-                        
-                                    st.success("Record saved to database ✔")
-                        
+                            # PST timestamp at moment of saving
+                            current_time = datetime.datetime.now(pst)
+                
+                            # Convert annotated spray image to bytes
+                            fig_mem.seek(0)
+                            output_image_bytes = fig_mem.getvalue()
+                
+                            # Open connection
+                            conn = get_connection()
+                            cur = conn.cursor()
+                
+                            # Insert into Neon
+                            cur.execute("""
+                                INSERT INTO litmus_results (
+                                    timestamp,
+                                    spray_cell,
+                                    chemical_type,
+                                    pass_fail,
+                                    mean_width,
+                                    mean_deflection,
+                                    output_image
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                current_time,
+                                spray_cell,
+                                chemical_type,
+                                disp,
+                                float(spray_width.mean()),
+                                float(deflection.mean()),
+                                psycopg2.Binary(output_image_bytes)
+                            ))
+                
+                            conn.commit()
+                            cur.close()
+                            conn.close()
+                
+                            st.success("Record saved to database")
+                
                         except Exception as e:
-                            st.error("Failed to save to database ❌")
+                            st.error("Failed to save to database")
                             st.write(str(e))
                         
 
