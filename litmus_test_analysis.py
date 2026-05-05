@@ -33,9 +33,10 @@ pst = pytz.timezone("America/Los_Angeles")
 ### Auto Connect to NEON
 def get_connection():
     return psycopg2.connect(NEON_CONN, sslmode="require")
+
 ### Saving Helper Function
-def save_litmus_to_db(data):
-    """Callback function to handle DB insertion."""
+def save_test_to_db(data):
+    """Callback to handle the DB insertion reliably."""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -48,9 +49,7 @@ def save_litmus_to_db(data):
         conn.commit()
         cur.close()
         conn.close()
-        # We use st.toast or a session_state flag because st.success 
-        # might vanish during the download rerun
-        st.toast("Record successfully saved to Neon DB!", icon="✅")
+        st.toast("Record saved to database!", icon="✅")
     except Exception as e:
         st.error(f"Database error: {e}")
 
