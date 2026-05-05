@@ -33,6 +33,26 @@ pst = pytz.timezone("America/Los_Angeles")
 ### Auto Connect to NEON
 def get_connection():
     return psycopg2.connect(NEON_CONN, sslmode="require")
+### Saving Helper Function
+def save_litmus_to_db(data):
+    """Callback function to handle DB insertion."""
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO litmus_results (
+                timestamp, spray_cell, chemical_type, 
+                pass_fail, mean_width, mean_deflection, output_image
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, data)
+        conn.commit()
+        cur.close()
+        conn.close()
+        # We use st.toast or a session_state flag because st.success 
+        # might vanish during the download rerun
+        st.toast("Record successfully saved to Neon DB!", icon="✅")
+    except Exception as e:
+        st.error(f"Database error: {e}")
 
 ### DB initialization
 def initialize_db():
@@ -572,57 +592,28 @@ with tab1:
                 download_object = io.BytesIO()
                 doc.save(download_object)
     
-                ### Use the download button to kick of DB entry
+                ### Use the download button to kick off DB entry
                 with button_place.container():
-
-                    if st.download_button(
+                    # Prepare the data tuple. 
+                    # Important: Convert numpy values to standard floats for psycopg2 compatibility.
+                    db_data = (
+                        datetime.datetime.now(pst),
+                        spray_cell,
+                        chemical_type,
+                        disp,
+                        float(spray_width.mean()),
+                        float(deflection.mean()),
+                        psycopg2.Binary(fig_mem.getvalue())
+                    )
+                
+                    st.download_button(
                         label='Download Report',
-                        data=download_object,
-                        file_name=f'litmus_test_report_{datetime.datetime.now().strftime("%m_%d_%y_%H_%M_%f")}.docx'
-                    ):
-                        # ONLY SAVE WHEN THE REPORT IS DOWNLOADED
-                        try:
-                            # PST timestamp at moment of saving
-                            current_time = datetime.datetime.now(pst)
-                
-                            # Convert annotated spray image to bytes
-                            fig_mem.seek(0)
-                            output_image_bytes = fig_mem.getvalue()
-                
-                            # Open connection
-                            conn = get_connection()
-                            cur = conn.cursor()
-                
-                            # Insert into Neon
-                            cur.execute("""
-                                INSERT INTO litmus_results (
-                                    timestamp,
-                                    spray_cell,
-                                    chemical_type,
-                                    pass_fail,
-                                    mean_width,
-                                    mean_deflection,
-                                    output_image
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            """, (
-                                current_time,
-                                spray_cell,
-                                chemical_type,
-                                disp,
-                                float(spray_width.mean()),
-                                float(deflection.mean()),
-                                psycopg2.Binary(output_image_bytes)
-                            ))
-                
-                            conn.commit()
-                            cur.close()
-                            conn.close()
-                
-                            st.success("Record saved to database")
-                
-                        except Exception as e:
-                            st.error("Failed to save to database")
-                            st.write(str(e))
+                        data=download_object.getvalue(),
+                        file_name=f'litmus_test_report_{datetime.datetime.now().strftime("%m_%d_%y_%H_%M")}.docx',
+                        mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        on_click=save_test_to_db,  # This triggers the save logic
+                        args=(db_data,)            # This passes your data to the function
+                    )
                         
 
     
