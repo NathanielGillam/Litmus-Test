@@ -496,7 +496,9 @@ with tab1:
     #######################
     # Output Result Section
     #######################
-    
+                
+                current_time = datetime.datetime.now(pst)
+
                 ### Initialize a word document.
                 doc = docx.Document()
                 ### Set up document margins
