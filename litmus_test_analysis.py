@@ -642,22 +642,26 @@ with tab2:
         options=["All", 1, 2, 3, 4],
         index=0
     )
-
+    
     # Chemical Type Filter
     filter_chem = st.selectbox(
         "Filter by Chemical Type",
         options=["All", "M1b", "Glass", "MALP"],
         index=0
     )
-
-    # Date Filter (Single Day)
+    
+    # Date Filter
     filter_date = st.date_input(
         "Filter by Date (PST)",
-        value=None,
-        help="Select a specific day to show results from that date."
+        value=None
     )
-
-    # Build SQL Query with Filters
+    
+    # Convert "All" to None so it doesn't break SQL
+    cell_param = None if filter_cell == "All" else filter_cell
+    chem_param = None if filter_chem == "All" else filter_chem
+    date_param = filter_date if filter_date else None
+    
+    # SQL Query
     query = """
         SELECT 
             id,
@@ -666,22 +670,24 @@ with tab2:
             chemical_type,
             pass_fail
         FROM litmus_results
-        WHERE (%s = 'All' OR spray_cell = %s)
-          AND (%s = 'All' OR chemical_type = %s)
+        WHERE (%s IS NULL OR spray_cell = %s)
+          AND (%s IS NULL OR chemical_type = %s)
           AND (%s IS NULL OR DATE(timestamp AT TIME ZONE 'America/Los_Angeles') = %s)
         ORDER BY timestamp DESC
     """
-
+    
     params = (
-        filter_cell, filter_cell,
-        filter_chem, filter_chem,
-        filter_date, filter_date
+        cell_param, cell_param,
+        chem_param, chem_param,
+        date_param, date_param
     )
-
+    
     # Load filtered data
     conn = get_connection()
     df = pd.read_sql(query, conn, params=params)
     conn.close()
+
+
 
     # Display table
     st.dataframe(df, use_container_width=True)
