@@ -674,4 +674,7 @@ with tab2:
     
             if image_bytes:
                 st.subheader("Stored Spray Image")
-                st.image(image_bytes, caption="Annotated Spray Pattern", use_column_width=True)
+                # Convert memoryview → bytes
+                img_bytes = bytes(image_bytes)
+                # Now Streamlit can render it
+                st.image(img_bytes, caption="Annotated Spray Pattern", width="stretch")
