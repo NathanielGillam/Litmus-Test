@@ -659,7 +659,8 @@ with tab2:
             id, 
             timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles' AS timestamp, 
             spray_cell, 
-            chemical_type, 
+            chemical_type,
+            mean_width,
             pass_fail
         FROM litmus_results
         WHERE (%s IS NULL OR spray_cell = %s)
@@ -680,7 +681,14 @@ with tab2:
     conn.close()
 
     if not df.empty:
+        # Format the timestamp
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %I:%M %p')
+        
+        # Round the Mean Width to 3 decimal places for a cleaner table
+        df['mean_width'] = df['mean_width'].map('{:,.3f}'.format)
+        
+        # Optional: Rename the column for the UI
+        df = df.rename(columns={'mean_width': 'Mean Width (in)'})
     
     # Display table
     st.dataframe(df, use_container_width=True)
