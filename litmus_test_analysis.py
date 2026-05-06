@@ -23,10 +23,11 @@ from PIL import Image
 from PIL.ExifTags import TAGS
 
 ### Configure Neon Connection String
-NEON_CONN = "postgresql://neondb_owner:npg_RqKQsPe3U4HV@ep-billowing-waterfall-apt0oh58.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
+NEON_CONN = st.secrets["NEON_CONN"]
 
 ### User information
 logged_in_user = getpass.getuser()
+
 ### Timestamp 
 pst = pytz.timezone("America/Los_Angeles")
 
