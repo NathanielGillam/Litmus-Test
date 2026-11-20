@@ -446,4 +446,221 @@ with tab1:
                 \n2. Upload the image to the "File Input" area on the left sidebar.
                 \n3. Crop the image so that the edges of the litmus paper are just out of frame. If cropping manually, check the "Done Cropping" box to proceed with analysis.
                 \n4. Confirm that the white dashed line correctly aligns with the centerline drawn on the litmus paper. 
-                If it does not align, check
+                If it does not align, check the "Adjust centerline identification" box in the "Image Settings" area on the left sidebar and adjust the threshold until the centerlines align correctly.
+                \n5. Dimensional characterization results will be shown to the right of the litmus paper image. Use the "Download Report" button to generate a file documenting the analysis results."""
+            )
+            st.divider()
+
+        with crop_col:
+            crop_placeholder = st.empty()
+        with img_col:
+            image_placeholder = st.empty()
+        with val_col:
+            values_placeholder = st.empty()
+
+        if uploaded_image is not None:
+            image_bytes = uploaded_image.getvalue()
+            image, input_dpi = load_image_and_dpi(image_bytes)
+
+            if not ((input_dpi[0] == 200) and (input_dpi[1] == 200)):
+                st.error(
+                    f"WARNING: Input image resolution did not match the expected resolution of 200 DPI. "
+                    f"The input image resolution is {input_dpi}.",
+                    icon="⚠️",
+                )
+                if input_dpi[0] == input_dpi[1]:
+                    image_dpi = input_dpi[0]
+
+            auto_crop_failed = False
+            unborder = None
+
+            if auto_crop:
+                try:
+                    tc, bc, lc, rc, unborder = compute_auto_crop(image_bytes)
+                except Exception:
+                    auto_crop_failed = True
+
+                if auto_crop_failed or not (tc > 0 and bc > 0 and lc > 0 and rc > 0):
+                    with crop_placeholder.container():
+                        st.error(
+                            "Auto-crop was unable to identify the boundaries of the litmus paper in the submitted image. "
+                            "Please use manual cropping.",
+                            icon="⚠️",
+                        )
+                    crop_done = False
+                else:
+                    crop_done = True
+
+            if not crop_done and not auto_crop:
+                extend = 20
+                crop_check, ax = plt.subplots()
+                try:
+                    ax.imshow(image)
+                    ax.set_xlim(0, image.shape[1])
+                    ax.set_ylim(image.shape[0], 0)
+                    ax.tick_params(labelsize=6)
+                    ax.plot([lc - extend, image.shape[1] - rc + extend], [image.shape[0] - bc, image.shape[0] - bc], color="red", lw=0.8, alpha=0.6)
+                    ax.plot([lc - extend, image.shape[1] - rc + extend], [tc, tc], color="red", lw=0.8, alpha=0.6)
+                    ax.plot([lc, lc], [image.shape[0] - bc + extend, tc - extend], color="red", lw=0.8, alpha=0.6)
+                    ax.plot([image.shape[1] - rc, image.shape[1] - rc], [image.shape[0] - bc + extend, tc - extend], color="red", lw=0.8, alpha=0.6)
+
+                    with crop_placeholder.container():
+                        st.pyplot(crop_check)
+                finally:
+                    plt.close(crop_check)
+
+            if crop_done:
+                cropped_image, metrics = analyze_litmus(
+                    image_bytes=image_bytes,
+                    tc=tc,
+                    bc=bc,
+                    lc=lc,
+                    rc=rc,
+                    edit_center=edit_center,
+                    m_thresh=m_thresh,
+                    image_dpi=image_dpi,
+                )
+
+                characterize = metrics["characterize"]
+                cntr = metrics["cntr"]
+
+                fig, ax = plt.subplot_mosaic("A", dpi=150)
+                try:
+                    ax["A"].imshow(cropped_image)
+                    ax["A"].set_xticks([])
+                    ax["A"].set_yticks([])
+
+                    if characterize:
+                        x = metrics["x"]
+                        bot_interp = metrics["bot_interp"]
+                        top_interp = metrics["top_interp"]
+                        center = metrics["center"]
+                        spray_width = metrics["spray_width"]
+                        deflection = metrics["deflection"]
+
+                        ax["A"].plot(metrics["bot_x"], metrics["bot_y"], color="black", lw=1)
+                        ax["A"].plot(metrics["top_x"], metrics["top_y"], color="black", lw=1)
+
+                        max_loc = np.argmax(spray_width)
+                        ax["A"].scatter([x[max_loc]], [bot_interp[max_loc]], marker=7, color="white", zorder=4, alpha=0.5, clip_on=False)
+                        ax["A"].scatter([x[max_loc]], [top_interp[max_loc]], marker=6, color="white", zorder=4, alpha=0.5, clip_on=False)
+                        ax["A"].plot([x[max_loc], x[max_loc]], [bot_interp[max_loc], top_interp[max_loc]], color="white", lw=1, ls=(0, (2, 2)), alpha=0.5)
+
+                        min_loc = np.argmin(spray_width)
+                        ax["A"].scatter([x[min_loc]], [bot_interp[min_loc]], marker=6, color="white", zorder=4, alpha=0.5, clip_on=False)
+                        ax["A"].scatter([x[min_loc]], [top_interp[min_loc]], marker=7, color="white", zorder=4, alpha=0.5, clip_on=False)
+                        ax["A"].plot([x[min_loc], x[min_loc]], [bot_interp[min_loc], top_interp[min_loc]], color="white", lw=1, ls=(0, (2, 2)), alpha=0.5)
+
+                        max_loc = np.argmax(deflection)
+                        if deflection.max() > 0:
+                            ax["A"].scatter([x[max_loc]], [top_interp[max_loc]], marker=6, color="red", zorder=4, alpha=0.5, clip_on=False)
+                            ax["A"].plot([x[max_loc], x[max_loc]], [center[max_loc], top_interp[max_loc]], color="red", lw=1, ls=(2, (2, 2)), alpha=0.5)
+                        else:
+                            ax["A"].scatter([x[max_loc]], [bot_interp[max_loc]], marker=6, color="red", zorder=4, alpha=0.5, clip_on=False)
+                            ax["A"].plot([x[max_loc], x[max_loc]], [center[max_loc], bot_interp[max_loc]], color="red", lw=1, ls=(2, (2, 2)), alpha=0.5)
+
+                        min_loc = np.argmin(deflection)
+                        if deflection.min() > 0:
+                            ax["A"].scatter([x[min_loc]], [top_interp[min_loc]], marker=7, color="red", zorder=4, alpha=0.5, clip_on=False)
+                            ax["A"].plot([x[min_loc], x[min_loc]], [center[min_loc], top_interp[min_loc]], color="red", lw=1, ls=(2, (2, 2)), alpha=0.5)
+                        else:
+                            ax["A"].scatter([x[min_loc]], [bot_interp[min_loc]], marker=7, color="red", zorder=4, alpha=0.5, clip_on=False)
+                            ax["A"].plot([x[min_loc], x[min_loc]], [center[min_loc], bot_interp[min_loc]], color="red", lw=1, ls=(2, (2, 2)), alpha=0.5)
+                    else:
+                        ax["A"].contour(metrics["spray_mask"], colors="black")
+
+                    ax["A"].axline((cntr[0], cntr[1]), slope=cntr[2], ls=(0, (4, 4)), color="white", lw=1.5)
+                    ax["A"].set_xlim(0, cropped_image.shape[1])
+                    ax["A"].set_ylim(cropped_image.shape[0], 0)
+
+                    # Save compact JPEG in memory for DB + Word report
+                    fig_mem = io.BytesIO()
+                    fig.savefig(fig_mem, format="jpeg", dpi=150, bbox_inches="tight", pad_inches=0)
+                    fig_jpeg_bytes = fig_mem.getvalue()
+
+                    with image_placeholder.container():
+                        st.pyplot(fig)
+                finally:
+                    plt.close(fig)
+
+                with values_placeholder.container():
+                    if characterize:
+                        results = metrics["results"]
+                        spray_width = metrics["spray_width"]
+                        deflection = metrics["deflection"]
+
+                        st.subheader("Analysis Results")
+                        st.dataframe(results)
+
+                        if np.isnan(spray_width.mean()):
+                            disp = "FAIL: spray pattern edge detection unsuccessful"
+                            st.write(f"#### :red[{disp}]")
+                        elif spray_width.mean() < 1:
+                            disp = "FAIL: mean spray width must be >1 in."
+                            st.write(f"#### :red[{disp}]")
+                        elif spray_width.mean() > 2:
+                            disp = "FAIL: mean spray width must be <2 in."
+                            st.write(f"#### :red[{disp}]")
+                        elif abs(deflection.mean()) > 10:
+                            disp = "FAIL: mean deflection angle must be <10°"
+                            st.write(f"#### :red[{disp}]")
+                        elif (deflection.max() - deflection.min()) > 15:
+                            disp = "FAIL: deflection range too large"
+                            st.write(f"#### :red[{disp}]")
+                        elif abs(deflection).max() > 18:
+                            disp = "FAIL: suspected drip inclusion"
+                            st.write(f"#### :red[{disp}]")
+                        else:
+                            disp = "PASS"
+                            st.write(f"### :green[{disp}]")
+
+                        button_place = st.empty()
+
+                        st.divider()
+                        st.markdown(
+                            """\nPass Criteria:
+                            \n- Mean Width: >1 in. and <2 in.
+                            \n- Mean Deflection: <10°
+                            \n- Deflection Range (max - min): <15°
+                            \n- Max. spray pattern deflection >18° indicates drip inclusion"""
+                        )
+                        st.divider()
+
+                        current_time = datetime.datetime.now(pst)
+                        docx_bytes = build_docx_report(
+                            disp=disp,
+                            fig_jpeg_bytes=fig_jpeg_bytes,
+                            img_height_inches=cropped_image.shape[1] / image_dpi,
+                            edit_center=edit_center,
+                            m_thresh=m_thresh,
+                            image_dpi=image_dpi,
+                            results=results,
+                            timestamp_str=current_time.strftime("%B %d, %Y - %I:%M %p"),
+                        )
+
+                        with button_place.container():
+                            db_data = (
+                                current_time,
+                                spray_cell,
+                                chemical_type,
+                                disp,
+                                float(spray_width.mean()),
+                                float(deflection.mean()),
+                                psycopg2.Binary(fig_jpeg_bytes),
+                            )
+
+                            st.download_button(
+                                label="Download Report",
+                                data=docx_bytes,
+                                file_name=f"litmus_test_report_{current_time.strftime('%m_%d_%y_%H_%M')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                on_click=save_test_to_db,
+                                args=(db_data,),
+                            )
+                    else:
+                        disp = "FAIL: spray pattern edge detection unsuccessful"
+                        st.write(f"#### :red[{disp}]")
+
+with tab2:
+    st.header("Database History")
+    st.subheader("Filters")
