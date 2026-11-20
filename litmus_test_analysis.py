@@ -699,3 +699,118 @@ with tab2:
 
     # Connect to DB and load minimal columns first
     st.subheader("Filters")
+
+    st.subheader("Filters")
+    
+        # Spray Cell Filter
+        filter_cell = st.selectbox(
+            "Filter by Spray Cell",
+            options=["All", 1, 2, 3, 4],
+            index=0
+        )
+        
+        # Chemical Type Filter
+        filter_chem = st.selectbox(
+            "Filter by Chemical Type",
+            options=["All", "M1b", "Glass", "MALP"],
+            index=0
+        )
+        
+        # Date Filter
+        filter_date = st.date_input(
+            "Filter by Date (PST)",
+            value=None
+        )
+        
+        # Convert "All" to None so it doesn't break SQL
+        cell_param = None if filter_cell == "All" else filter_cell
+        chem_param = None if filter_chem == "All" else filter_chem
+        date_param = filter_date if filter_date else None
+        
+        # SQL Query - Convert the UTC storage back to PST for display
+        query = """
+            SELECT 
+                id, 
+                timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles' AS timestamp, 
+                spray_cell, 
+                chemical_type,
+                mean_width,
+                pass_fail
+            FROM litmus_results
+            WHERE (%s IS NULL OR spray_cell = %s)
+              AND (%s IS NULL OR chemical_type = %s)
+              AND (%s IS NULL OR DATE(timestamp AT TIME ZONE 'America/Los_Angeles') = %s)
+            ORDER BY timestamp DESC
+            LIMIT 1000
+        """
+        
+        params = (
+            cell_param, cell_param,
+            chem_param, chem_param,
+            date_param, date_param
+        )
+        
+        # Load filtered data
+        conn = get_connection()
+        df = pd.read_sql(query, conn, params=params)
+        conn.close()
+    
+        if not df.empty:
+            # Format the timestamp
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %I:%M %p')
+            
+            # Round the Mean Width to 3 decimal places for a cleaner table
+            df['mean_width'] = df['mean_width'].map('{:,.3f}'.format)
+            
+            # Optional: Rename the column for the UI
+            df = df.rename(columns={'mean_width': 'Mean Width (in)'})
+        
+        # Display table
+        st.dataframe(df, use_container_width=True)
+    
+        st.subheader("View Record Details")
+    
+        record_id = st.number_input("Enter Record ID to view full details:", min_value=1, step=1)
+    
+        
+        if st.button("Load Record"):
+        
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT
+                    timestamp,
+                    spray_cell,
+                    chemical_type,
+                    pass_fail,
+                    mean_width,
+                    mean_deflection,
+                    output_image
+                FROM litmus_results
+                WHERE id = %s
+            """, (record_id,))
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+        
+            if row is None:
+                st.error("Record not found.")
+            else:
+                timestamp, cell, chem, pf, mw, md, image_bytes = row
+    
+                # Convert the UTC timestamp from the database back to PST for display
+                local_time = timestamp.astimezone(pst)
+        
+                st.write(f"**Timestamp:** {timestamp}")
+                st.write(f"**Spray Cell:** {cell}")
+                st.write(f"**Chemical Type:** {chem}")
+                st.write(f"**Result:** {pf}")
+                st.write(f"**Mean Width:** {mw:.3f} in")
+                st.write(f"**Mean Deflection:** {md:.3f}°")
+        
+                if image_bytes:
+                    st.subheader("Stored Spray Image")
+                    # Convert memoryview → bytes
+                    img_bytes = bytes(image_bytes)
+                    # Now Streamlit can render it
+                    st.image(img_bytes, caption="Annotated Spray Pattern", width="stretch")
